@@ -30,7 +30,7 @@ https://github.com/cmliu/edgetunnel
 - 支持通过 `SUB_EDGE_IPS` 或 `SUB_NODE_ADDRESSES` 指定多个 Cloudflare 边缘 IP。
 - 当设置多个边缘 IP 时，订阅会为每个 IP 生成一条节点，而不是只选择其中一个。
 - 多边缘 IP 订阅会额外生成一条 `domain` 域名兜底节点。
-- 非 SS WebSocket 链接增加 `alpn=h2,http/1.1`。
+- 非 SS WebSocket 链接固定使用 `alpn=http/1.1`，避免传统 WebSocket 误协商到不兼容的 HTTP/2。
 - 默认单节点链接也应用相同的 ECH 和 ALPN 逻辑。
 - 增加部分 `request.cf` 字段保护，避免在非标准请求环境中报错。
 
