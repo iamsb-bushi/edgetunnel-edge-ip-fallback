@@ -38,9 +38,7 @@ https://github.com/cmliu/edgetunnel
 
 关于 `SUB_EDGE_IPS` / `SUB_NODE_ADDRESSES` 的配置方式、Cloudflare 边缘 IP 的获取方式，以及 `domain` 兜底节点的作用，请看：
 
-```text
-EDGE_IPS.md
-```
+[边缘 IP 与域名兜底说明](./EDGE_IPS.md)
 
 ## 隐私与发布注意
 

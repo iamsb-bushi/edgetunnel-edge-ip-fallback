@@ -1,6 +1,8 @@
 # 🚀 edgetunnel 2.1
 ![后台页面](./img.png)
 
+> 本仓库是基于 [cmliu/edgetunnel](https://github.com/cmliu/edgetunnel) 的修改版。新增了多边缘 IP 节点和域名兜底生成逻辑。具体修复内容、Cloudflare 文本变量填写方法及指定 IP 示例，请查看 [边缘 IP 与域名兜底说明](./EDGE_IPS.md)；其他改动见 [修改版说明](./MODIFICATIONS.md)。
+
 [![Stars](https://img.shields.io/github/stars/cmliu/edgetunnel?style=flat-square&logo=github)](https://github.com/cmliu/edgetunnel/stargazers)
 [![Forks](https://img.shields.io/github/forks/cmliu/edgetunnel?style=flat-square&logo=github)](https://github.com/cmliu/edgetunnel/network/members)
 [![License](https://img.shields.io/github/license/cmliu/edgetunnel?style=flat-square)](https://github.com/cmliu/edgetunnel/blob/main/LICENSE)
