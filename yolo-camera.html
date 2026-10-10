@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>YOLO 摄像头实时检测</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0f14;--panel:#111822;--line:#263445;--text:#eef5ff;--muted:#91a3b8;--accent:#67e8f9;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at top,#132235 0,#0b0f14 48%);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh}
+.app{max-width:1000px;margin:auto;padding:14px}
+h1{font-size:clamp(24px,6vw,36px);margin:8px 0}
+.sub{color:var(--muted);line-height:1.55;margin:0 0 14px}
+.stage{position:relative;background:#000;border:1px solid var(--line);border-radius:18px;overflow:hidden;min-height:260px;aspect-ratio:16/9}
+video{display:block;width:100%;height:100%;object-fit:contain;background:#000}
+canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.badge{position:absolute;top:10px;left:10px;background:#08101bcc;border:1px solid #ffffff1a;border-radius:10px;padding:7px 10px;font-size:13px}
+.controls{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+button,.control{border:1px solid var(--line);background:var(--panel);color:var(--text);min-height:50px;border-radius:12px;padding:10px;font-size:15px}
+button{font-weight:700}
+.primary{background:linear-gradient(135deg,#0e7490,#155e75)!important;border-color:#2389a4!important}
+.control{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.control input{width:100%}
+.status{margin-top:12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#111822cc;color:var(--muted);line-height:1.5}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.pill{padding:5px 9px;border-radius:999px;background:#14202d;border:1px solid var(--line);font-size:12px;color:#bfd0e4}
+@media(max-width:760px){.controls{grid-template-columns:1fr 1fr}.app{padding:10px}}
+</style>
+</head>
+<body>
+<main class="app">
+<h1>YOLO 摄像头实时目标检测</h1>
+<p class="sub">点击启动后调用摄像头，用 YOLO 实时检测 person（人）和 COCO 常见物体，并直接画框。</p>
+<section class="stage" id="stage">
+<video id="video" autoplay muted playsinline></video>
+<canvas id="overlay"></canvas>
+<div class="badge" id="badge">未启动</div>
+</section>
+<section class="controls">
+<button class="primary" id="start">启动摄像头</button>
+<button id="switch" disabled>切换前/后摄像头</button>
+<button id="pause" disabled>暂停检测</button>
+<div class="control"><span>置信度 <b id="ct">0.35</b></span><input id="conf" type="range" min=".1" max=".9" value=".35" step=".05"></div>
+</section>
+<div class="status" id="status"><b>状态：</b>等待启动。首次使用请允许摄像头权限。</div>
+<div class="pills"><span class="pill">person：青色框</span><span class="pill">其他物体：自动分色</span><span class="pill">YOLO / COCO 80 类</span><span class="pill">浏览器本地推理</span></div>
+</main>
+<canvas id="input" width="640" height="640" hidden></canvas>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.2/dist/ort.min.js"></script>
+<script>
+(function(){
+"use strict";
+var MODEL="https://huggingface.co/flotek/yolo26n-onnx/resolve/main/model.onnx?download=true";
+var SIZE=640;
+var COCO=["person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed","dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven","toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush"];
+var video=document.getElementById("video"),overlay=document.getElementById("overlay"),ctx=overlay.getContext("2d");
+var input=document.getElementById("input"),ictx=input.getContext("2d",{willReadFrequently:true});
+var start=document.getElementById("start"),sw=document.getElementById("switch"),pause=document.getElementById("pause");
+var conf=document.getElementById("conf"),ct=document.getElementById("ct"),status=document.getElementById("status"),badge=document.getElementById("badge");
+var session=null,stream=null,facing="environment",running=false,paused=false,busy=false,last=0,fps=0;
+ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.2/dist/";
+ort.env.wasm.numThreads=Math.max(1,Math.min(4,navigator.hardwareConcurrency||2));
+function st(t,bad){status.innerHTML="<b>状态：</b>"+t;status.style.color=bad?"#ff6b6b":"#91a3b8"}
+async function model(){
+ if(session)return session;
+ st("正在加载 YOLO 模型，首次打开需要下载模型…");
+ try{
+  if("gpu" in navigator){
+   try{session=await ort.InferenceSession.create(MODEL,{executionProviders:["webgpu"],graphOptimizationLevel:"all"});st("模型已加载（WebGPU），正在启动摄像头。");return session}catch(e){console.warn(e)}
+  }
+  session=await ort.InferenceSession.create(MODEL,{executionProviders:["wasm"],graphOptimizationLevel:"all"});st("模型已加载（WASM），正在启动摄像头。");return session
+ }catch(e){st("模型加载失败："+(e.message||e),true);throw e}
+}
+function stopCam(){running=false;if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}}
+async function cam(){
+ stopCam();st("正在请求摄像头权限…");
+ stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}}});
+ video.srcObject=stream;await video.play();
+ if(!video.videoWidth)await new Promise(function(r){video.onloadedmetadata=r});
+ overlay.width=video.videoWidth;overlay.height=video.videoHeight;
+ document.getElementById("stage").style.aspectRatio=video.videoWidth+"/"+video.videoHeight;
+ running=true;paused=false;sw.disabled=false;pause.disabled=false;pause.textContent="暂停检测";start.textContent="重新启动";
+ st("摄像头已启动："+video.videoWidth+"×"+video.videoHeight+"，正在检测…");requestAnimationFrame(loop)
+}
+function prep(){
+ var vw=video.videoWidth,vh=video.videoHeight,s=Math.min(SIZE/vw,SIZE/vh),dw=Math.round(vw*s),dh=Math.round(vh*s),px=Math.floor((SIZE-dw)/2),py=Math.floor((SIZE-dh)/2);
+ ictx.fillStyle="rgb(114,114,114)";ictx.fillRect(0,0,SIZE,SIZE);ictx.drawImage(video,0,0,vw,vh,px,py,dw,dh);
+ var rgba=ictx.getImageData(0,0,SIZE,SIZE).data,area=SIZE*SIZE,a=new Float32Array(3*area);
+ for(var i=0,p=0;i<area;i++,p+=4){a[i]=rgba[p]/255;a[area+i]=rgba[p+1]/255;a[area*2+i]=rgba[p+2]/255}
+ return {tensor:new ort.Tensor("float32",a,[1,3,SIZE,SIZE]),scale:s,padX:px,padY:py,vw:vw,vh:vh}
+}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function col(id){return id===0?"#67e8f9":"hsl("+((id*47+12)%360)+" 90% 62%)"}
+function draw(data,dims,p){
+ ctx.clearRect(0,0,overlay.width,overlay.height);
+ var th=Number(conf.value),rows=0,stride=6;
+ if(dims.length===3&&dims[2]>=6){rows=dims[1];stride=dims[2]}else if(dims.length===2&&dims[1]>=6){rows=dims[0];stride=dims[1]}else rows=Math.floor(data.length/6);
+ ctx.lineWidth=Math.max(2,Math.round(p.vw/500));ctx.font=Math.max(14,Math.round(p.vw/55))+"px system-ui";ctx.textBaseline="top";
+ var count=0;
+ for(var i=0;i<rows;i++){
+  var k=i*stride,score=data[k+4];if(!Number.isFinite(score)||score<th)continue;
+  var id=Math.round(data[k+5]);if(id<0||id>=COCO.length)continue;
+  var x1=clamp((data[k]-p.padX)/p.scale,0,p.vw),y1=clamp((data[k+1]-p.padY)/p.scale,0,p.vh),x2=clamp((data[k+2]-p.padX)/p.scale,0,p.vw),y2=clamp((data[k+3]-p.padY)/p.scale,0,p.vh);
+  var w=x2-x1,h=y2-y1;if(w<=2||h<=2)continue;
+  var c=col(id);ctx.strokeStyle=c;ctx.strokeRect(x1,y1,w,h);
+  var lab=COCO[id]+" "+Math.round(score*100)+"%",tw=ctx.measureText(lab).width+10,lh=parseInt(ctx.font,10)+8,ly=Math.max(0,y1-lh);
+  ctx.fillStyle=c;ctx.fillRect(x1,ly,tw,lh);ctx.fillStyle="#071018";ctx.fillText(lab,x1+5,ly+4);count++
+ }
+ badge.textContent=count+" 个目标 · "+fps.toFixed(1)+" FPS"
+}
+async function infer(){var p=prep(),feeds={};feeds[session.inputNames[0]]=p.tensor;var r=await session.run(feeds),o=r[session.outputNames[0]];draw(o.data,o.dims,p)}
+async function loop(ts){
+ if(!running)return;requestAnimationFrame(loop);if(paused||busy||!session||video.readyState<2||ts-last<33)return;
+ busy=true;var t0=performance.now();
+ try{await infer();var f=1000/Math.max(1,performance.now()-t0);fps=fps?fps*.82+f*.18:f;last=ts}catch(e){console.error(e);st("推理出错："+(e.message||e),true);paused=true;pause.textContent="继续检测"}finally{busy=false}
+}
+start.onclick=async function(){
+ try{
+  if(!window.isSecureContext)throw new Error("当前页面不是安全 HTTPS 页面。");
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error("当前浏览器不支持摄像头 API。");
+  await model();await cam()
+ }catch(e){
+  var m=e.message||String(e);
+  if(e.name==="NotAllowedError"||e.name==="PermissionDeniedError")m="摄像头权限被拒绝。请在浏览器站点权限里允许摄像头。";
+  st(m,true)
+ }
+};
+sw.onclick=async function(){facing=facing==="environment"?"user":"environment";try{await cam()}catch(e){st("切换摄像头失败："+(e.message||e),true)}};
+pause.onclick=function(){paused=!paused;pause.textContent=paused?"继续检测":"暂停检测";badge.textContent=paused?"已暂停":badge.textContent};
+conf.oninput=function(){ct.textContent=Number(conf.value).toFixed(2)};
+window.addEventListener("beforeunload",stopCam);
+})();
+</script>
+</body>
+</html>
