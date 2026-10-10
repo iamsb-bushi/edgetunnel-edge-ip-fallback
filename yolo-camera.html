@@ -44,7 +44,7 @@ button{font-weight:700}
 <div class="control"><span>置信度 <b id="ct">0.35</b></span><input id="conf" type="range" min=".1" max=".9" value=".35" step=".05"></div>
 </section>
 <div class="status" id="status"><b>状态：</b>等待启动。首次使用请允许摄像头权限。</div>
-<div class="pills"><span class="pill">person：青色框</span><span class="pill">其他物体：自动分色</span><span class="pill">YOLO / COCO 80 类</span><span class="pill">浏览器本地推理</span></div>
+<div class="pills"><span class="pill">person：青色框</span><span class="pill">其他物体：自动分色</span><span class="pill">YOLO / COCO 80 类</span><span class="pill">浏览器本地推理 · WASM兼容模式</span></div>
 </main>
 <canvas id="input" width="640" height="640" hidden></canvas>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.2/dist/ort.min.js"></script>
@@ -66,10 +66,15 @@ async function model(){
  if(session)return session;
  st("正在加载 YOLO 模型，首次打开需要下载模型…");
  try{
-  if("gpu" in navigator){
-   try{session=await ort.InferenceSession.create(MODEL,{executionProviders:["webgpu"],graphOptimizationLevel:"all"});st("模型已加载（WebGPU），正在启动摄像头。");return session}catch(e){console.warn(e)}
-  }
-  session=await ort.InferenceSession.create(MODEL,{executionProviders:["wasm"],graphOptimizationLevel:"all"});st("模型已加载（WASM），正在启动摄像头。");return session
+  // Android Chromium 的 WebGPU 对此 YOLO 图中的 Resize 节点存在兼容性问题，
+  // 会在首次推理时报 Invalid data type。这里固定使用 ONNX Runtime WASM，
+  // 仍然是完全本地推理，但兼容性明显更好。
+  session=await ort.InferenceSession.create(MODEL,{
+   executionProviders:["wasm"],
+   graphOptimizationLevel:"all"
+  });
+  st("模型已加载（WASM 兼容模式），正在启动摄像头。");
+  return session
  }catch(e){st("模型加载失败："+(e.message||e),true);throw e}
 }
 function stopCam(){running=false;if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}}
